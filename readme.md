@@ -5,6 +5,7 @@
 
 ---
 
+[![CodeFactor](https://www.codefactor.io/repository/github/harshall25/social-media-app/badge)](https://www.codefactor.io/repository/github/harshall25/social-media-app)
 ## Features
 
 ### Login Signup (User Authentication)
