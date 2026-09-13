@@ -70,16 +70,28 @@ export function PostCard({ post, onLike, isLiked, onSelectHashtag }) {
           </div>
 
           {post.imageUrl && (
-            <div className="mt-3 rounded-2xl overflow-hidden border border-outline-variant/40">
-              <img
-                src={convertImageUrl(post.imageUrl)}
-                alt="Post content"
-                className="w-full h-auto object-cover max-h-[500px]"
-                onError={(e) => {
-                  e.target.style.display = 'none';
-                }}
-              />
-            </div>
+              <div className="mt-3 rounded-2xl overflow-hidden border border-outline-variant/40">
+                {/\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i.test(post.imageUrl) ? (
+                    <video
+                        src={convertImageUrl(post.imageUrl)}
+                        controls
+                        preload="metadata"
+                        className="w-full h-auto max-h-[500px]"
+                        onError={(e) => {
+                          console.error('Video failed:', e.currentTarget.src);
+                        }}
+                    />
+                ) : (
+                    <img
+                        src={convertImageUrl(post.imageUrl)}
+                        alt="Post content"
+                        className="w-full h-auto object-cover max-h-[500px]"
+                        onError={(e) => {
+                          console.error('Image failed:', e.currentTarget.src);
+                        }}
+                    />
+                )}
+              </div>
           )}
 
           {post.tags && post.tags.length > 0 && (
