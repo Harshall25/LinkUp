@@ -73,7 +73,7 @@ export function PostCard({ post, onLike, isLiked, onSelectHashtag }) {
               <div className="mt-3 rounded-2xl overflow-hidden border border-outline-variant/40">
                 {/\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i.test(post.imageUrl) ? (
                     <video
-                        src={convertImageUrl(post.imageUrl)}
+                        src={post.imageUrl}
                         controls
                         preload="metadata"
                         className="w-full h-auto max-h-[500px]"
