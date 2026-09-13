@@ -39,13 +39,21 @@ app.use((err, req, res, next) => {
     });
 });
 
-// Database connection and server start
-connectDB().then(() => {
-    const PORT = process.env.PORT || 3000;
-    app.listen(PORT, () => {
-        console.log(`Server is running on port ${PORT}`);
+// Kick off DB connection at boot. On Vercel this happens on cold start; the
+// mongoose connection is cached in config/database.js and reused across warm
+// invocations. Failures log but do not kill the process — subsequent requests
+// will retry via connectDB().
+connectDB().catch((err) => console.error('Initial DB connect failed:', err));
+
+// Only bind a port when running as a long-lived server (local dev, Cloud Run,
+// or any container host). On Vercel VERCEL=1 is set, so we skip listen()
+// and just export the app for the serverless wrapper.
+if (!process.env.VERCEL) {
+    const PORT = process.env.PORT || 8080;
+    const HOST = '0.0.0.0';
+    app.listen(PORT, HOST, () => {
+        console.log(`Server is running on ${HOST}:${PORT}`);
     });
-}).catch((error) => {
-    console.error('Failed to start server:', error);
-    process.exit(1);
-});
+}
+
+module.exports = app;

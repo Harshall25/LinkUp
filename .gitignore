@@ -1,2 +1,21 @@
 node_modules/
+
+# Environment files (keep only .env.example / .env.development)
 .env
+.env.local
+.env.*.local
+.env.production
+
+# Build output
+client/dist/
+server/dist/
+
+# Vercel local caches
+.vercel/
+
+# Editor / OS
+.agents/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
