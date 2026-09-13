@@ -4,6 +4,8 @@ A full-stack social media platform for sharing posts, discovering users, and bui
 
 Live Link : [LinkUp](https://social-media-app-nu-two-29.vercel.app/)
 
+[![CodeFactor](https://www.codefactor.io/repository/github/harshall25/social-media-app/badge)](https://www.codefactor.io/repository/github/harshall25/social-media-app)
+
 ## Features
 
 - User signup and login with JWT authentication
