@@ -1,5 +1,5 @@
 node_modules/
-
+.claude
 # Environment files (keep only .env.example / .env.development)
 .env
 .env.local
