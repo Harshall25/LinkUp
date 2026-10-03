@@ -123,7 +123,8 @@ R2_ACCESS_KEY_ID=your-access-key
 R2_SECRET_ACCESS_KEY=your-secret-key
 R2_BUCKET_NAME=your-bucket
 
-BASE_URL=http://localhost:8080
+# Optional: enables "Continue with Google" (OAuth Web client ID)
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 ```
 
 Run:

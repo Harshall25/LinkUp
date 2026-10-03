@@ -1,138 +1,106 @@
 import { useEffect, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Plus, Search } from 'lucide-react';
 import { LinkupLogo } from '../ui/LinkupLogo';
 import { ProfileDropdown } from './ProfileDropdown';
+import { CONTAINER } from './container';
 
-const NAV_TABS = [
-  { id: 'home', label: 'Feed' },
-  { id: 'explore', label: 'Explore' },
+const NAV_LINKS = [
+  { to: '/', label: 'Feed', end: true },
+  { to: '/search', label: 'Explore' },
 ];
 
-export function TopNav({
-  activeTab,
-  setActiveTab,
-  currentUser,
-  onLogout,
-}) {
+const pillClass = ({ isActive }) =>
+  `shrink-0 px-3.5 py-2 rounded-full text-sm font-semibold transition-colors ${
+    isActive
+      ? 'text-primary bg-primary-fixed/60'
+      : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
+  }`;
+
+export function TopNav() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [localQuery, setLocalQuery] = useState('');
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
-    if (location.pathname === '/search') {
-      const q = new URLSearchParams(location.search).get('q') || '';
-      setLocalQuery(q);
-    }
+    const onSearch = location.pathname === '/search';
+    setQuery(onSearch ? new URLSearchParams(location.search).get('q') || '' : '');
   }, [location.pathname, location.search]);
 
-  const handleSubmit = (e) => {
+  const submit = (e) => {
     e.preventDefault();
-    const q = localQuery.trim();
-    if (q) navigate(`/search?q=${encodeURIComponent(q)}`);
+    const q = query.trim();
+    navigate(q ? `/search?q=${encodeURIComponent(q)}` : '/search');
   };
 
-  const clickTab = (id) => {
-    if (id === 'explore') {
-      navigate('/search');
-      return;
-    }
-    setActiveTab(id);
-    if (location.pathname !== '/') navigate('/');
-  };
-
-  const onSearchRoute = location.pathname === '/search';
-  const effectiveTab = onSearchRoute ? 'explore' : activeTab;
+  // The feed page focuses the composer whenever this state changes.
+  const compose = () => navigate('/', { state: { compose: Date.now() } });
 
   return (
     <header className="sticky top-0 z-40 glass-panel">
-      <div className="max-w-[1400px] mx-auto flex items-center gap-4 px-4 sm:px-6 h-16">
-        <Link
-          to="/"
-          className="flex items-center gap-2 flex-shrink-0"
-          onClick={() => setActiveTab('home')}
-        >
+      <div className={`${CONTAINER} h-16 flex items-center gap-3 sm:gap-6`}>
+        <Link to="/" className="flex items-center gap-2 flex-shrink-0" aria-label="Linkup home">
           <LinkupLogo size={30} />
-          <span className="font-bold text-lg text-primary-container tracking-editorial hidden sm:inline">
+          <span className="hidden sm:inline font-bold text-xl text-primary-container tracking-editorial">
             Linkup
           </span>
         </Link>
 
-        <form onSubmit={handleSubmit} className="flex-1 max-w-2xl">
-          <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-on-surface-variant">
-              <Search size={18} strokeWidth={1.75} />
-            </div>
+        <form role="search" onSubmit={submit} className="flex-1 min-w-0 max-w-xl mx-auto">
+          <label className="relative block">
+            <span className="sr-only">Search posts, people and #hashtags</span>
+            <Search
+              size={18}
+              strokeWidth={1.75}
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none"
+            />
             <input
               type="search"
-              value={localQuery}
-              onChange={(e) => setLocalQuery(e.target.value)}
-              placeholder="Search posts and people…"
-              className="block w-full pl-11 pr-4 py-2.5 rounded-full bg-surface-container-low border border-outline-variant/50 text-on-surface text-sm placeholder:text-outline focus:bg-surface-container-lowest focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 outline-none transition-all"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search posts, people, #tags"
+              className="block w-full h-10 pl-11 pr-4 rounded-full bg-surface-container-low border border-outline-variant/60 text-on-surface text-sm placeholder:text-outline focus:bg-surface-container-lowest focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 outline-none transition-all"
             />
-          </div>
+          </label>
         </form>
 
-        <nav className="hidden md:flex items-center gap-1">
-          {NAV_TABS.map((tab) => {
-            const active = effectiveTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => clickTab(tab.id)}
-                className={`px-3.5 py-2 rounded-full text-sm font-semibold transition-colors ${
-                  active
-                    ? 'text-primary bg-primary-fixed/60'
-                    : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
-                }`}
-              >
-                {tab.label}
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+          <nav className="hidden md:flex items-center gap-1" aria-label="Primary">
+            {NAV_LINKS.map((link) => (
+              <NavLink key={link.to} to={link.to} end={link.end} className={pillClass}>
+                {link.label}
+              </NavLink>
+            ))}
+          </nav>
           <button
             type="button"
-            onClick={() => {
-              setActiveTab('home');
-              if (location.pathname !== '/') navigate('/');
-            }}
-            className="hidden sm:inline-flex items-center gap-1.5 pl-3 pr-4 py-2 rounded-full bg-primary-container text-on-primary text-sm font-semibold hover:bg-primary transition-colors subtle-wine-halo active:translate-y-[1px]"
+            onClick={compose}
+            className="hidden sm:inline-flex items-center gap-1.5 h-10 pl-3.5 pr-4 rounded-full bg-primary-container text-on-primary text-sm font-semibold hover:bg-[#C4694B] transition-colors subtle-wine-halo active:translate-y-[1px]"
           >
-            <Plus size={16} strokeWidth={2} />
-            <span>Create Post</span>
+            <Plus size={16} strokeWidth={2.25} />
+            Create post
           </button>
-          <ProfileDropdown
-            currentUser={currentUser}
-            activeTab={effectiveTab}
-            setActiveTab={setActiveTab}
-            onLogout={onLogout}
-          />
+          <button
+            type="button"
+            onClick={compose}
+            aria-label="Create post"
+            className="sm:hidden inline-flex items-center justify-center w-10 h-10 rounded-full bg-primary-container text-on-primary hover:bg-[#C4694B] transition-colors"
+          >
+            <Plus size={18} strokeWidth={2.25} />
+          </button>
+          <ProfileDropdown />
         </div>
       </div>
 
-      <div className="md:hidden border-t border-outline-variant/40 px-2">
-        <nav className="flex items-center gap-1 overflow-x-auto py-2 no-scrollbar">
-          {NAV_TABS.map((tab) => {
-            const active = effectiveTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => clickTab(tab.id)}
-                className={`shrink-0 px-3.5 py-1.5 rounded-full text-sm font-semibold transition-colors ${
-                  active
-                    ? 'text-primary bg-primary-fixed/60'
-                    : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
-                }`}
-              >
-                {tab.label}
-              </button>
-            );
-          })}
-        </nav>
-      </div>
+      <nav className="md:hidden border-t border-outline-variant/40" aria-label="Primary">
+        <div className={`${CONTAINER} flex items-center gap-1 py-1.5`}>
+          {NAV_LINKS.map((link) => (
+            <NavLink key={link.to} to={link.to} end={link.end} className={pillClass}>
+              {link.label}
+            </NavLink>
+          ))}
+        </div>
+      </nav>
     </header>
   );
 }

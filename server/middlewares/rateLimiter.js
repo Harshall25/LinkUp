@@ -1,9 +1,11 @@
 const rateLimit = require('express-rate-limit');
 
-// General API rate limiter - 100 requests per 15 minutes
+// General API rate limiter - 300 requests per 15 minutes. Media redirects are
+// excluded: every image/video on a page is a request, and they are cached.
 const generalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // Limit each IP to 100 requests per windowMs
+    max: 300,
+    skip: (req) => req.path.startsWith('/v1/media/file/'),
     message: {
         error: 'Too many requests from this IP, please try again later.',
         retryAfter: 15 * 60 // seconds

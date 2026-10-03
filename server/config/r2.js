@@ -1,4 +1,5 @@
-const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const s3Client = new S3Client({
     region: "auto",
@@ -7,52 +8,29 @@ const s3Client = new S3Client({
         accessKeyId: process.env.R2_ACCESS_KEY_ID,
         secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
     },
+    // Newer SDKs sign a CRC32 of an empty body into presigned PUT URLs, which
+    // R2 then rejects once the browser uploads the real file.
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
 });
 
+const bucket = () => process.env.R2_BUCKET_NAME;
 
-// UPLOAD FILE TO R2
-const uploadToR2 = async (fileBuffer, fileName, contentType) => {
-    try {
-        const command = new PutObjectCommand({
-            Bucket: process.env.R2_BUCKET_NAME,
-            Key: fileName,
-            Body: fileBuffer,
-            ContentType: contentType
-        });
+const uploadToR2 = (body, key, contentType) =>
+    s3Client.send(new PutObjectCommand({ Bucket: bucket(), Key: key, Body: body, ContentType: contentType }));
 
-        await s3Client.send(command);
+const getUploadUrl = (key, contentType, expiresIn = 600) =>
+    getSignedUrl(s3Client, new PutObjectCommand({ Bucket: bucket(), Key: key, ContentType: contentType }), { expiresIn });
 
-        // return the public url through our server
-        const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
-        const publicUrl = `${baseUrl}/api/v1/media/file/${fileName}`;
-        
-        return publicUrl;
-    } catch (error) {
-        throw new Error(`R2 upload failed: ${error.message}`);
-    }
-};
+const getDownloadUrl = (key, expiresIn) =>
+    getSignedUrl(s3Client, new GetObjectCommand({ Bucket: bucket(), Key: key }), { expiresIn });
 
-
-// delete file from r2
-const deleteFromR2 = async (fileName) => {
-    try {
-        const command = new DeleteObjectCommand({
-            Bucket: process.env.R2_BUCKET_NAME,
-            Key: fileName,
-        });
-        await s3Client.send(command);
-        return true;
-    } catch (error) {
-        throw new Error(`R2 deletion failed: ${error.message}`);
-    }
-};
+const deleteFromR2 = (key) =>
+    s3Client.send(new DeleteObjectCommand({ Bucket: bucket(), Key: key }));
 
 module.exports = {
-    s3Client,
     uploadToR2,
+    getUploadUrl,
+    getDownloadUrl,
     deleteFromR2
 };
-
-
-
-

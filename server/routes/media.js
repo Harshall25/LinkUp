@@ -1,105 +1,110 @@
+const crypto = require('crypto');
 const express = require('express');
+const multer = require('multer');
+const { z } = require('zod');
 const mediaRouter = express.Router();
 const { mediaLimiter } = require('../middlewares/rateLimiter');
-const multer = require('multer');
 const { userAuth } = require('../middlewares/userAuth');
-const { uploadToR2, deleteFromR2 } = require('../config/r2');
+const { uploadToR2, getUploadUrl, getDownloadUrl } = require('../config/r2');
+const { KEY_PATTERN, toMediaUrl } = require('../utils/media');
+const { zodMessage } = require('../utils/validation');
 
-// Configure multer for memory storage
-const storage = multer.memoryStorage();
-const upload = multer({
-    storage,
-    limits: {
-        fileSize: 50 * 1024 * 1024, // 50MB limit
-    },
-    fileFilter: (req, file, cb) => {
-        // Allow images and videos
-        if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/')) {
-            cb(null, true);
-        } else {
-            cb(new Error('Only image and video files are allowed'), false);
-        }
+const MAX_BYTES = 50 * 1024 * 1024;
+const MEDIA_TYPE = /^(image|video)\/[\w.+-]+$/;
+
+const EXTENSIONS = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'image/avif': 'avif',
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'video/ogg': 'ogv',
+    'video/quicktime': 'mov',
+};
+
+// The client decides image vs video from the extension, so derive it from
+// the MIME type rather than trusting the original filename.
+function newObjectKey(contentType, originalName = '') {
+    const fallback = originalName.split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5);
+    const ext = EXTENSIONS[contentType] || fallback || 'bin';
+    return `media/${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
+}
+
+const uploadUrlSchema = z.object({
+    contentType: z.string().regex(MEDIA_TYPE, 'Only images and videos can be uploaded'),
+    size: z.number().int().positive().max(MAX_BYTES, 'Files must be 50 MB or smaller'),
+});
+
+// Preferred path: the browser PUTs straight to R2, so large videos never pass
+// through the serverless function (Vercel caps request bodies at 4.5 MB).
+mediaRouter.post('/upload-url', mediaLimiter, userAuth, async (req, res) => {
+    const parsed = uploadUrlSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({ error: zodMessage(parsed.error) });
+    }
+    try {
+        const { contentType } = parsed.data;
+        const key = newObjectKey(contentType);
+        const uploadUrl = await getUploadUrl(key, contentType);
+        res.status(200).json({ uploadUrl, url: toMediaUrl(key), key });
+    } catch (error) {
+        console.error('Presign failed:', error);
+        res.status(500).json({ error: 'Could not prepare the upload' });
     }
 });
 
-// Upload single media file to R2
-mediaRouter.post('/upload', mediaLimiter, userAuth, upload.single('media'), async (req, res) => {
-    try {
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_BYTES },
+    fileFilter: (req, file, cb) => {
+        if (MEDIA_TYPE.test(file.mimetype)) cb(null, true);
+        else cb(new Error('Only images and videos can be uploaded'), false);
+    }
+});
+
+// Fallback for when the bucket's CORS policy blocks direct browser uploads.
+mediaRouter.post('/upload', mediaLimiter, userAuth, (req, res) => {
+    upload.single('media')(req, res, async (err) => {
+        if (err) {
+            const tooLarge = err.code === 'LIMIT_FILE_SIZE';
+            return res.status(tooLarge ? 413 : 400).json({
+                error: tooLarge ? 'Files must be 50 MB or smaller' : err.message
+            });
+        }
         if (!req.file) {
             return res.status(400).json({ error: 'No file uploaded' });
         }
-
-        // Generate unique filename
-        const fileExtension = req.file.originalname.split('.').pop();
-        const fileName = `media/${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExtension}`;
-
-        // Upload to R2
-        const publicUrl = await uploadToR2(req.file.buffer, fileName, req.file.mimetype);
-
-        res.status(200).json({
-            message: 'Media uploaded successfully',
-            url: publicUrl,
-            fileName: fileName
-        });
-    } catch (error) {
-        res.status(500).json({
-            error: 'Upload failed',
-            message: error.message
-        });
-    }
-});
-
-// Delete media from R2
-mediaRouter.delete('/delete/:fileName', userAuth, async (req, res) => {
-    try {
-        const { fileName } = req.params;
-
-        await deleteFromR2(fileName);
-
-        res.status(200).json({
-            message: 'Media deleted successfully'
-        });
-    } catch (error) {
-        res.status(500).json({
-            error: 'Deletion failed',
-            message: error.message
-        });
-    }
-});
-
-// Serve media files - handle all paths after /file/
-mediaRouter.get(/^\/file\/(.+)/, async (req, res) => {
-    try {
-        // Get the full path from the regex capture group
-        const fileName = req.params[0];
-        const { GetObjectCommand } = require('@aws-sdk/client-s3');
-        const { s3Client } = require('../config/r2');
-
-        const command = new GetObjectCommand({
-            Bucket: process.env.R2_BUCKET_NAME,
-            Key: fileName,
-        });
-
-        const response = await s3Client.send(command);
-        
-        // Set appropriate headers
-        res.setHeader('Content-Type', response.ContentType || 'application/octet-stream');
-        res.setHeader('Cache-Control', 'public, max-age=31536000');
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        
-        // Convert stream to buffer and send
-        const chunks = [];
-        for await (const chunk of response.Body) {
-            chunks.push(chunk);
+        try {
+            const key = newObjectKey(req.file.mimetype, req.file.originalname);
+            await uploadToR2(req.file.buffer, key, req.file.mimetype);
+            res.status(200).json({ url: toMediaUrl(key), key });
+        } catch (error) {
+            console.error('Upload failed:', error);
+            res.status(500).json({ error: 'Upload failed' });
         }
-        const buffer = Buffer.concat(chunks);
-        res.send(buffer);
+    });
+});
+
+const DOWNLOAD_URL_TTL = 24 * 60 * 60;
+const REDIRECT_CACHE_TTL = 60 * 60;
+
+// Redirect to a short-lived signed R2 URL instead of streaming through the
+// function: R2 serves Range requests (needed for video seeking and Safari
+// playback) and there is no 4.5 MB response cap.
+mediaRouter.get(/^\/file\/(.+)$/, async (req, res) => {
+    const key = req.params[0];
+    if (!KEY_PATTERN.test(key)) {
+        return res.status(404).json({ error: 'File not found' });
+    }
+    try {
+        const url = await getDownloadUrl(key, DOWNLOAD_URL_TTL);
+        res.set('Cache-Control', `public, max-age=${REDIRECT_CACHE_TTL}, s-maxage=${REDIRECT_CACHE_TTL}`);
+        res.redirect(302, url);
     } catch (error) {
-        console.error('Error serving file:', error);
-        res.status(404).json({
-            error: 'File not found',
-            message: error.message
-        });
+        console.error('Signing download URL failed:', error);
+        res.status(500).json({ error: 'Could not load file' });
     }
 });
 

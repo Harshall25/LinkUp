@@ -3,106 +3,139 @@ const authRouter = express.Router();
 const { authLimiter } = require('../middlewares/rateLimiter');
 const { userModel } = require('../schema');
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
 const { z } = require('zod');
-const { JWT_KEY } = require('../middlewares/userAuth');
+const { OAuth2Client } = require('google-auth-library');
+const { signToken } = require('../middlewares/userAuth');
+const { zodMessage, exactMatch } = require('../utils/validation');
 
-// Zod validation schemas
+const googleClient = new OAuth2Client();
+
 const signupSchema = z.object({
-    name: z.string().min(1, "Name is required"),
-    email: z.string().email("Invalid email format"),
-    password: z.string().min(6, "Password must be at least 6 characters")
+    name: z.string().trim().min(1, "Name is required").max(60, "Name must be 60 characters or fewer"),
+    email: z.string().trim().email("Enter a valid email address"),
+    password: z.string().min(6, "Password must be at least 6 characters").max(128)
 });
 
 const signinSchema = z.object({
-    email: z.string().email("Invalid email format"),
+    email: z.string().trim().email("Enter a valid email address"),
     password: z.string().min(1, "Password is required")
 });
 
+const googleSchema = z.object({
+    credential: z.string().min(1, "Missing Google credential")
+});
+
+// Older accounts were stored with the email exactly as typed.
+const findByEmail = (email) => userModel.findOne({ email: exactMatch(email) });
+
+const toPublicUser = (user) => ({
+    id: user._id.toString(),
+    name: user.name,
+    email: user.email,
+    avatar: user.avatar || null
+});
+
+const sendSession = (res, status, user) =>
+    res.status(status).json({ success: true, token: signToken(user._id), user: toPublicUser(user) });
+
+// The Google client ID is public; serving it at runtime keeps it configured
+// in one place (the server env) instead of also baking it into the client build.
+authRouter.get('/config', (req, res) => {
+    res.set('Cache-Control', 'no-cache');
+    res.json({ googleClientId: process.env.GOOGLE_CLIENT_ID || null });
+});
+
 authRouter.post('/signup', authLimiter, async function (req, res) {
+    const parsed = signupSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({ error: zodMessage(parsed.error) });
+    }
     try {
-        // Validate input using Zod
-        const validatedData = signupSchema.parse(req.body);
-        const { name, email, password } = validatedData;
+        const { name, password } = parsed.data;
+        const email = parsed.data.email.toLowerCase();
 
-        // Check if email already exists
-        const existAlready = await userModel.findOne({ email });
-        if (existAlready) {
-            return res.status(409).json({
-                error: "Email already exists"
-            });
+        if (await findByEmail(email)) {
+            return res.status(409).json({ error: "An account with this email already exists" });
         }
 
-        // Hash password
-        const hashedPassword = await bcrypt.hash(password, 5);
-
-        // Create user
-        await userModel.create({
-            name: name,
-            email: email,
-            password: hashedPassword,
+        const user = await userModel.create({
+            name,
+            email,
+            password: await bcrypt.hash(password, 10),
         });
 
-        res.status(201).json({
-            message: "Signed up successfully"
-        });
+        sendSession(res, 201, user);
     } catch (error) {
-        if (error instanceof z.ZodError) {
-            return res.status(400).json({
-                error: "Validation failed",
-                details: error.errors
-            });
-        }
-        res.status(500).json({
-            error: "Internal server error",
-            message: error.message
-        });
+        console.error('Signup failed:', error);
+        res.status(500).json({ error: "Could not create your account. Please try again." });
     }
 });
 
 authRouter.post('/signin', authLimiter, async function (req, res) {
+    const parsed = signinSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({ error: zodMessage(parsed.error) });
+    }
     try {
-        // Validate input using Zod
-        const validatedData = signinSchema.parse(req.body);
-        const { email, password } = validatedData;
+        const { email, password } = parsed.data;
+        const user = await findByEmail(email);
 
-        // Check if user exists
-        const user = await userModel.findOne({ email });
-        if (!user) {
-            return res.status(404).json({
-                error: "User not found. Please signup first"
-            });
+        if (user && !user.password) {
+            return res.status(400).json({ error: "This account uses Google sign-in. Continue with Google instead." });
+        }
+        if (!user || !(await bcrypt.compare(password, user.password))) {
+            return res.status(401).json({ error: "Incorrect email or password" });
         }
 
-        // Match password
-        const passwordMatch = await bcrypt.compare(password, user.password);
-        if (!passwordMatch) {
-            return res.status(401).json({
-                error: "Incorrect password"
-            });
-        }
-
-        // Create JWT token
-        const token = jwt.sign({
-            id: user._id.toString(),
-        }, JWT_KEY);
-
-        res.status(200).json({
-            success: true,
-            message: "Login successful",
-            token: token
-        });
+        sendSession(res, 200, user);
     } catch (error) {
-        if (error instanceof z.ZodError) {
-            return res.status(400).json({
-                error: "Validation failed",
-                details: error.errors
-            });
+        console.error('Signin failed:', error);
+        res.status(500).json({ error: "Could not sign you in. Please try again." });
+    }
+});
+
+authRouter.post('/google', authLimiter, async function (req, res) {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    if (!clientId) {
+        return res.status(503).json({ error: "Google sign-in is not configured" });
+    }
+    const parsed = googleSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({ error: zodMessage(parsed.error) });
+    }
+
+    let profile;
+    try {
+        const ticket = await googleClient.verifyIdToken({ idToken: parsed.data.credential, audience: clientId });
+        profile = ticket.getPayload();
+    } catch {
+        return res.status(401).json({ error: "Google sign-in failed. Please try again." });
+    }
+    if (!profile?.email || !profile.email_verified) {
+        return res.status(401).json({ error: "Your Google account email is not verified" });
+    }
+
+    try {
+        let user = await userModel.findOne({ googleId: profile.sub }) || await findByEmail(profile.email);
+
+        if (user) {
+            // Link Google to an existing email/password account with the same verified email.
+            if (!user.googleId) user.googleId = profile.sub;
+            if (!user.avatar && profile.picture) user.avatar = profile.picture;
+            if (user.isModified()) await user.save();
+            return sendSession(res, 200, user);
         }
-        res.status(500).json({
-            error: "Internal server error",
-            message: error.message
+
+        user = await userModel.create({
+            name: profile.name || profile.email.split('@')[0],
+            email: profile.email.toLowerCase(),
+            googleId: profile.sub,
+            avatar: profile.picture,
         });
+        sendSession(res, 201, user);
+    } catch (error) {
+        console.error('Google signin failed:', error);
+        res.status(500).json({ error: "Could not sign you in. Please try again." });
     }
 });
 

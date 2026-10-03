@@ -1,4 +1,25 @@
 /** @type {import('tailwindcss').Config} */
+
+// Colors resolve to CSS variables (defined per theme in src/index.css) so a
+// single class like `bg-surface` adapts to light and dark mode.
+const TOKENS = [
+  'surface', 'surface-dim', 'surface-bright',
+  'surface-container-lowest', 'surface-container-low', 'surface-container',
+  'surface-container-high', 'surface-container-highest',
+  'on-surface', 'on-surface-variant', 'inverse-surface', 'inverse-on-surface',
+  'outline', 'outline-variant', 'surface-tint',
+  'primary', 'on-primary', 'primary-container', 'on-primary-container', 'inverse-primary',
+  'secondary', 'on-secondary', 'secondary-container', 'on-secondary-container',
+  'tertiary', 'on-tertiary', 'tertiary-container', 'on-tertiary-container',
+  'error', 'on-error', 'error-container', 'on-error-container',
+  'primary-fixed', 'primary-fixed-dim', 'on-primary-fixed', 'on-primary-fixed-variant',
+  'secondary-fixed', 'secondary-fixed-dim', 'on-secondary-fixed', 'on-secondary-fixed-variant',
+];
+
+const colors = Object.fromEntries(
+  TOKENS.map((token) => [token, `rgb(var(--color-${token}) / <alpha-value>)`])
+);
+
 export default {
   darkMode: 'class',
   content: [
@@ -8,50 +29,10 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Anthropic-inspired palette: warm cream + coral
-        surface: '#F5F4EE',
-        'surface-dim': '#E9E7DE',
-        'surface-bright': '#FBFAF6',
-        'surface-container-lowest': '#FFFFFF',
-        'surface-container-low': '#F0EEE6',
-        'surface-container': '#E9E7DE',
-        'surface-container-high': '#DEDCD3',
-        'surface-container-highest': '#D2CFC5',
-        'on-surface': '#1F1F1F',
-        'on-surface-variant': '#5B5B57',
-        'inverse-surface': '#2A2926',
-        'inverse-on-surface': '#F5F4EE',
-        outline: '#929289',
-        'outline-variant': '#D6D4CB',
-        'surface-tint': '#D97757',
-        primary: '#B65E42',
-        'on-primary': '#FFFFFF',
-        'primary-container': '#D97757',
-        'on-primary-container': '#FFFFFF',
-        'inverse-primary': '#F0BC94',
-        secondary: '#B65E42',
-        'on-secondary': '#FFFFFF',
-        'secondary-container': '#F0BC94',
-        'on-secondary-container': '#4D1F0A',
-        tertiary: '#2A2926',
-        'on-tertiary': '#F5F4EE',
-        'tertiary-container': '#3C3A34',
-        'on-tertiary-container': '#E1DED4',
-        error: '#B3261E',
-        'on-error': '#FFFFFF',
-        'error-container': '#F9DEDC',
-        'on-error-container': '#410E0B',
-        'primary-fixed': '#F7DDC7',
-        'primary-fixed-dim': '#F0BC94',
-        'on-primary-fixed': '#4D1F0A',
-        'on-primary-fixed-variant': '#6B2E14',
-        'secondary-fixed': '#F0DFC8',
-        'secondary-fixed-dim': '#DDC2A0',
-        'on-secondary-fixed': '#3E2412',
-        'on-secondary-fixed-variant': '#6B4127',
-        background: '#F5F4EE',
-        'on-background': '#1F1F1F',
-        'surface-variant': '#E9E7DE',
+        ...colors,
+        background: colors.surface,
+        'on-background': colors['on-surface'],
+        'surface-variant': colors['surface-container'],
       },
       fontFamily: {
         sans: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],

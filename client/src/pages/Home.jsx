@@ -1,209 +1,77 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { PenLine, Users } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { postsAPI } from '../api/posts';
-import { usersAPI } from '../api/users';
+import { usePostFeed } from '../hooks/usePostFeed';
 import { AppShell } from '../components/layout/AppShell';
 import { PostComposer } from '../components/post/PostComposer';
-import { Feed } from './views/Feed';
-import { ProfileView } from './views/ProfileView';
+import { EmptyState, PostList } from '../components/post/PostList';
+
+const FEED_TABS = [
+  { id: 'forYou', label: 'For you' },
+  { id: 'following', label: 'Following' },
+];
 
 export default function HomePage() {
-  const { user, logout, isAuthenticated } = useAuth();
-  const navigate = useNavigate();
-
-  const [activeTab, setActiveTab] = useState('home');
+  const { user } = useAuth();
+  const location = useLocation();
   const [feedType, setFeedType] = useState('forYou');
-  const [posts, setPosts] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  const [likedPosts, setLikedPosts] = useState(new Set());
-  const [following, setFollowing] = useState(new Set());
-  const [trendingHashtags, setTrendingHashtags] = useState([]);
-  const [suggestedUsers, setSuggestedUsers] = useState([]);
-  const [currentUserData, setCurrentUserData] = useState(null);
-
-  const CURRENT_USER = {
-    id: user?.id || 'u1',
-    name: user?.name || 'User',
-    handle: `@${user?.email?.split('@')[0] || 'user'}`,
-    avatar: null,
-    bio: 'Salon member',
-    following: 0,
-    followers: 0,
-    cover:
-      'https://picsum.photos/seed/linkup-cover/1600/400',
-  };
-
-  useEffect(() => {
-    if (!isAuthenticated) navigate('/login');
-  }, [isAuthenticated, navigate]);
-
-  // Any tab other than home/profile centralises through the /search page.
-  useEffect(() => {
-    if (activeTab === 'explore') {
-      navigate('/search');
-    }
-  }, [activeTab, navigate]);
-
-  const fetchPosts = useCallback(
-    async (feedTypeParam = null) => {
-      try {
-        setLoading(true);
-        const current = feedTypeParam ?? feedType;
-        const params = { limit: 50, sortBy: 'createdAt', sortOrder: 'desc' };
-        if (current === 'following') params.feedType = 'following';
-        const response = await postsAPI.getPosts(params);
-        setPosts(response.posts || []);
-      } catch (error) {
-        console.error('Failed to fetch posts:', error);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [feedType]
-  );
-
-  const fetchTrendingHashtags = useCallback(async () => {
-    try {
-      const response = await postsAPI.getTrendingHashtags(10);
-      setTrendingHashtags(response.trending || []);
-    } catch (error) {
-      console.error('Failed to fetch trending hashtags:', error);
-    }
-  }, []);
-
-  const fetchSuggestedUsers = useCallback(async () => {
-    try {
-      const response = await usersAPI.getSuggestedUsers();
-      setSuggestedUsers(response.users || []);
-    } catch (error) {
-      console.error('Failed to fetch suggested users:', error);
-    }
-  }, []);
-
-  const fetchCurrentUserData = useCallback(async () => {
-    try {
-      const response = await usersAPI.getCurrentUser();
-      setCurrentUserData(response.user);
-    } catch (error) {
-      console.error('Failed to fetch current user data:', error);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchPosts();
-    fetchTrendingHashtags();
-    fetchSuggestedUsers();
-    fetchCurrentUserData();
-  }, [fetchPosts, fetchTrendingHashtags, fetchSuggestedUsers, fetchCurrentUserData]);
-
-  const handleToggleFollow = async (userId) => {
-    try {
-      if (following.has(userId)) {
-        await usersAPI.unfollowUser(userId);
-        setFollowing((prev) => {
-          const next = new Set(prev);
-          next.delete(userId);
-          return next;
-        });
-      } else {
-        await usersAPI.followUser(userId);
-        setFollowing((prev) => new Set(prev).add(userId));
-      }
-      await fetchSuggestedUsers();
-      await fetchCurrentUserData();
-    } catch (error) {
-      console.error('Failed to toggle follow:', error);
-    }
-  };
-
-  const handleLike = async (postId) => {
-    try {
-      const isLiked = likedPosts.has(postId);
-      if (isLiked) {
-        await postsAPI.unlikePost(postId);
-        setLikedPosts((prev) => {
-          const next = new Set(prev);
-          next.delete(postId);
-          return next;
-        });
-        setPosts((current) =>
-          current.map((p) =>
-            p._id === postId ? { ...p, likesCount: Math.max(0, p.likesCount - 1) } : p
-          )
-        );
-      } else {
-        await postsAPI.likePost(postId);
-        setLikedPosts((prev) => new Set(prev).add(postId));
-        setPosts((current) =>
-          current.map((p) => (p._id === postId ? { ...p, likesCount: p.likesCount + 1 } : p))
-        );
-      }
-    } catch (error) {
-      console.error('Failed to toggle like:', error);
-    }
-  };
-
-  const handleSelectHashtag = (tag) => {
-    navigate(`/search?q=${encodeURIComponent(`#${tag}`)}`);
-  };
-
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
-  };
-
-  if (!isAuthenticated) return null;
-
-  const rightSidebarProps = {
-    onSelectHashtag: handleSelectHashtag,
-    trendingHashtags,
-    suggestedUsers,
-    following,
-    onToggleFollow: handleToggleFollow,
-  };
+  const [railRefreshKey, setRailRefreshKey] = useState(0);
+  const feed = usePostFeed(feedType === 'following' ? { feedType: 'following' } : {});
+  const refreshRail = () => setRailRefreshKey((k) => k + 1);
 
   return (
-    <AppShell
-      activeTab={activeTab}
-      setActiveTab={setActiveTab}
-      currentUser={CURRENT_USER}
-      onLogout={handleLogout}
-      rightSidebarProps={rightSidebarProps}
-    >
-      {activeTab === 'profile' ? (
-        <ProfileView
-          user={{
-            ...CURRENT_USER,
-            ...currentUserData,
-            handle: currentUserData ? `@${currentUserData.email?.split('@')[0]}` : CURRENT_USER.handle,
-          }}
-          posts={posts.filter((p) => p.author?._id === (currentUserData?.id || CURRENT_USER.id))}
-          onLike={handleLike}
-          likedPosts={likedPosts}
-          onSelectHashtag={handleSelectHashtag}
-        />
-      ) : (
-        <>
-          <PostComposer
-            currentUser={CURRENT_USER}
-            onPostCreated={async () => {
-              await fetchPosts();
-              await fetchTrendingHashtags();
-            }}
-          />
-          <Feed
-            posts={posts}
-            loading={loading}
-            feedType={feedType}
-            setFeedType={setFeedType}
-            likedPosts={likedPosts}
-            onLike={handleLike}
-            onSelectHashtag={handleSelectHashtag}
-          />
-        </>
-      )}
+    <AppShell railRefreshKey={railRefreshKey}>
+      <div
+        role="tablist"
+        aria-label="Feed"
+        className="md:sticky md:top-16 z-30 bg-surface-container-lowest/90 backdrop-blur-md px-5 border-b border-outline-variant/40 flex gap-1 py-2"
+      >
+        {FEED_TABS.map((tab) => {
+          const active = feedType === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setFeedType(tab.id)}
+              className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-colors ${
+                active
+                  ? 'text-primary bg-primary-fixed/60'
+                  : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <PostComposer
+        currentUser={user}
+        focusKey={location.state?.compose}
+        onPostCreated={(post) => {
+          feed.prepend(post);
+          refreshRail();
+        }}
+      />
+
+      <PostList
+        feed={feed}
+        onDeleted={refreshRail}
+        emptyState={
+          feedType === 'following' ? (
+            <EmptyState
+              icon={Users}
+              title="Nothing here yet"
+              description="Follow people from Explore or the suggestions panel and their posts will show up here."
+            />
+          ) : (
+            <EmptyState icon={PenLine} title="No posts yet" description="Be the first to share something." />
+          )
+        }
+      />
     </AppShell>
   );
 }

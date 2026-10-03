@@ -15,7 +15,8 @@ const connectDB = async () => {
     const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/social-media';
 
     inflightPromise = mongoose
-        .connect(MONGODB_URI)
+        // Fail inside the function's 30s budget so the next request can retry.
+        .connect(MONGODB_URI, { serverSelectionTimeoutMS: 8000 })
         .then((conn) => {
             cachedConn = conn;
             inflightPromise = null;

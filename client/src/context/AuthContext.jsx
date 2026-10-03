@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { authAPI } from '../api/auth';
+import { usersAPI } from '../api/users';
 
 const AuthContext = createContext(null);
 
@@ -11,69 +12,76 @@ export const useAuth = () => {
   return context;
 };
 
-export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [token, setToken] = useState(null);
-  const [loading, setLoading] = useState(true);
+const readStoredUser = () => {
+  try {
+    return JSON.parse(localStorage.getItem('user')) || null;
+  } catch {
+    return null;
+  }
+};
 
-  useEffect(() => {
-    // Check for existing auth on mount
-    const storedToken = localStorage.getItem('token');
-    const storedUser = localStorage.getItem('user');
-    
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
-    }
-    setLoading(false);
+const toSessionUser = (user) => ({
+  id: String(user.id),
+  name: user.name,
+  email: user.email,
+  avatar: user.avatar || null,
+});
+
+export const AuthProvider = ({ children }) => {
+  const [token, setToken] = useState(() => localStorage.getItem('token'));
+  const [user, setUser] = useState(readStoredUser);
+
+  const saveUser = useCallback((next) => {
+    const sessionUser = toSessionUser(next);
+    localStorage.setItem('user', JSON.stringify(sessionUser));
+    setUser(sessionUser);
   }, []);
 
-  const signup = async (name, email, password) => {
-    const response = await authAPI.signup(name, email, password);
-    return response;
-  };
-
-  const signin = async (email, password) => {
-    const response = await authAPI.signin(email, password);
-    
-    if (response.token) {
-      const userData = {
-        email: email,
-        name: email.split('@')[0], // Use email prefix as name initially
-      };
-      
+  const startSession = useCallback(
+    (response) => {
       localStorage.setItem('token', response.token);
-      localStorage.setItem('user', JSON.stringify(userData));
       setToken(response.token);
-      setUser(userData);
-    }
-    
-    return response;
-  };
+      saveUser(response.user);
+      return response;
+    },
+    [saveUser]
+  );
+
+  // Sessions saved by older builds lack id/name/avatar; refresh from the API.
+  const refreshUser = useCallback(async () => {
+    const { user: me } = await usersAPI.getCurrentUser();
+    saveUser(me);
+    return me;
+  }, [saveUser]);
+
+  useEffect(() => {
+    if (token) refreshUser().catch(() => {});
+  }, [token, refreshUser]);
+
+  const signin = async (email, password) => startSession(await authAPI.signin(email, password));
+
+  const signup = async (name, email, password) => startSession(await authAPI.signup(name, email, password));
+
+  const signinWithGoogle = async (credential) => startSession(await authAPI.google(credential));
 
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    window.google?.accounts?.id?.disableAutoSelect();
     setToken(null);
     setUser(null);
   };
 
-  const isAuthenticated = !!token;
-
   const value = {
     user,
     token,
-    loading,
-    isAuthenticated,
+    isAuthenticated: !!token,
     signup,
     signin,
+    signinWithGoogle,
     logout,
-    setUser,
+    refreshUser,
   };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

@@ -1,247 +1,235 @@
-import { useRef, useState } from 'react';
-import { Image as ImageIcon, X, Loader2 } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Hash, Image as ImageIcon, Loader2, X } from 'lucide-react';
 import { Avatar } from '../ui/Avatar';
 import { Button } from '../ui/Button';
-import { mediaAPI } from '../../api/media';
+import { MAX_UPLOAD_BYTES, mediaAPI } from '../../api/media';
 import { postsAPI } from '../../api/posts';
+import { getErrorMessage } from '../../api/axios';
 
-export function PostComposer({ currentUser, onPostCreated }) {
+const MAX_LENGTH = 5000;
+const MAX_TAGS = 10;
+
+export function PostComposer({ currentUser, onPostCreated, focusKey }) {
   const [content, setContent] = useState('');
-  const [selectedImage, setSelectedImage] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
-  const [videoPreview, setVideoPreview] = useState(null);
-  const [manualTags, setManualTags] = useState([]);
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [tags, setTags] = useState([]);
   const [tagInput, setTagInput] = useState('');
   const [posting, setPosting] = useState(false);
+  const [progress, setProgress] = useState(null);
+  const [error, setError] = useState('');
   const fileInputRef = useRef(null);
+  const textareaRef = useRef(null);
 
-  const handleImageSelect = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setSelectedImage(file);
+  useEffect(() => {
+    if (focusKey) textareaRef.current?.focus();
+  }, [focusKey]);
 
-    const previewUrl = URL.createObjectURL(file);
+  useEffect(() => () => preview && URL.revokeObjectURL(preview.url), [preview]);
 
-    if (file.type.startsWith('video/')) {
-      setVideoPreview(previewUrl);
-      setImagePreview(null);
-    } else {
-      setImagePreview(previewUrl);
-      setVideoPreview(null);
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    // Chrome counts placeholder text in scrollHeight, so only measure real text.
+    el.style.height = '';
+    if (content) el.style.height = `${Math.min(el.scrollHeight, 320)}px`;
+  }, [content]);
+
+  const pickFile = (e) => {
+    const picked = e.target.files?.[0];
+    e.target.value = '';
+    if (!picked) return;
+    if (!/^(image|video)\//.test(picked.type)) {
+      setError('Only images and videos can be attached.');
+      return;
     }
+    if (picked.size > MAX_UPLOAD_BYTES) {
+      setError('Files must be 50 MB or smaller.');
+      return;
+    }
+    setError('');
+    setFile(picked);
+    setPreview({ url: URL.createObjectURL(picked), isVideo: picked.type.startsWith('video/') });
   };
 
-  const handleRemoveImage = () => {
-    if (imagePreview) {
-      URL.revokeObjectURL(imagePreview);
-    }
-
-    if (videoPreview) {
-      URL.revokeObjectURL(videoPreview);
-    }
-
-    setSelectedImage(null);
-    setImagePreview(null);
-    setVideoPreview(null);
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+  const clearFile = () => {
+    setFile(null);
+    setPreview(null);
   };
 
-  const handleAddTag = () => {
-    const t = tagInput.trim().replace(/^#/, '');
-    if (t && !manualTags.includes(t)) {
-      setManualTags([...manualTags, t]);
-      setTagInput('');
-    }
+  const addTag = () => {
+    const tag = tagInput.trim().replace(/^#+/, '').replace(/[^\p{L}\p{N}_]/gu, '').toLowerCase();
+    if (tag && !tags.includes(tag) && tags.length < MAX_TAGS) setTags([...tags, tag]);
+    setTagInput('');
   };
 
-  const handleRemoveTag = (tagToRemove) => {
-    setManualTags(manualTags.filter((tag) => tag !== tagToRemove));
-  };
+  const canSubmit = (content.trim() || file) && content.length <= MAX_LENGTH && !posting;
 
-  const handleSubmit = async () => {
-    if (!content.trim() && !selectedImage) return;
+  const submit = async () => {
+    if (!canSubmit) return;
+    setPosting(true);
+    setError('');
     try {
-      setPosting(true);
-      let imageUrl = null;
-      if (selectedImage) {
-        const uploadResponse = await mediaAPI.uploadMedia(selectedImage);
-        imageUrl = uploadResponse.url;
+      let imageUrl;
+      if (file) {
+        setProgress(0);
+        imageUrl = await mediaAPI.uploadMedia(file, setProgress);
       }
-      const contentHashtags = content.match(/#[\w]+/g) || [];
-      const extracted = contentHashtags.map((tag) => tag.slice(1));
-      const allTags = [...new Set([...extracted, ...manualTags])];
-
-      const postData = {
-        content,
-        tags: allTags,
+      const { post } = await postsAPI.createPost({
+        content: content.trim(),
+        tags,
         ...(imageUrl && { imageUrl }),
-      };
-
-      await postsAPI.createPost(postData);
+      });
       setContent('');
-      setManualTags([]);
+      setTags([]);
       setTagInput('');
-      handleRemoveImage();
-      await onPostCreated?.();
-    } catch (error) {
-      console.error('Failed to create post:', error);
-
-      alert(
-        `Failed to create post: ${
-  error.response?.data?.error || error.message
-}`
-      );
+      clearFile();
+      onPostCreated?.(post);
+    } catch (err) {
+      setError(getErrorMessage(err, "Couldn't publish your post. Please try again."));
     } finally {
       setPosting(false);
+      setProgress(null);
     }
   };
 
-  const canSubmit = (content.trim() || selectedImage) && !posting;
+  const remaining = MAX_LENGTH - content.length;
 
   return (
-    <div className="p-5 border-b border-outline-variant/40">
-      <div className="flex gap-4">
-
+    <div className="px-5 pt-5 pb-4 border-b border-outline-variant/40">
+      <div className="flex gap-3.5">
         <div className="hidden sm:block">
-          <Avatar
-            src={currentUser.avatar}
-            alt={currentUser.name}
-            size="lg"
-          />
+          <Avatar src={currentUser?.avatar} alt={currentUser?.name || 'You'} size="lg" />
         </div>
 
-        <div className="flex-1">
-
+        <div className="flex-1 min-w-0">
           <textarea
+            ref={textareaRef}
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder="Share a note, a proof sketch, or a room worth joining…"
-            className="w-full text-base placeholder:text-outline border-none focus:ring-0 resize-none h-24 bg-transparent text-on-surface"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            rows={2}
+            placeholder="What's on your mind?"
+            aria-label="Write a post"
+            className="w-full min-h-[56px] pt-2.5 text-[17px] leading-relaxed placeholder:text-outline border-none focus:ring-0 resize-none bg-transparent text-on-surface"
           />
 
-          {/* ------------------------------------------------
-              Media Preview
-          ------------------------------------------------ */}
-
-          {(imagePreview || videoPreview) && (
-            <div className="relative mb-3">
-
-              {imagePreview ? (
-                <img
-                  src={imagePreview}
-                  alt="Preview"
-                  className="w-full max-h-80 object-cover rounded-2xl border border-outline-variant/40"
-                />
+          {preview && (
+            <div className="relative mt-2 rounded-2xl overflow-hidden border border-outline-variant/50 bg-surface-container-low">
+              {preview.isVideo ? (
+                <video src={preview.url} controls playsInline className="block w-full max-h-80 bg-black" />
               ) : (
-                <video
-                  src={videoPreview}
-                  controls
-                  className="w-full max-h-80 object-cover rounded-2xl border border-outline-variant/40"
-                />
+                <img src={preview.url} alt="Selected attachment" className="block w-full max-h-80 object-cover" />
               )}
-
-              <button
-                onClick={handleRemoveImage}
-                className="absolute top-2 right-2 p-1.5 bg-tertiary/60 hover:bg-tertiary/80 rounded-full text-on-primary"
-              >
-                <X size={18} strokeWidth={1.75} />
-              </button>
-
+              {!posting && (
+                <button
+                  type="button"
+                  onClick={clearFile}
+                  aria-label="Remove attachment"
+                  className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-black/75 rounded-full text-white transition-colors"
+                >
+                  <X size={16} strokeWidth={2} />
+                </button>
+              )}
+              {progress !== null && (
+                <div className="absolute inset-x-0 bottom-0 bg-black/55 px-3 py-2 text-white text-xs font-medium">
+                  <div className="flex justify-between mb-1">
+                    <span>{progress < 1 ? 'Uploading…' : 'Processing…'}</span>
+                    <span className="tabular-nums">{Math.round(progress * 100)}%</span>
+                  </div>
+                  <div className="h-1 rounded-full bg-white/25 overflow-hidden">
+                    <div
+                      className="h-full bg-white transition-[width] duration-200"
+                      style={{ width: `${Math.round(progress * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {/* ------------------------------------------------
-              Tags
-          ------------------------------------------------ */}
-
-          <div className="mb-3">
-
-            <div className="flex flex-wrap gap-2 mb-2">
-
-              {manualTags.map((tag, i) => (
+          {tags.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {tags.map((tag) => (
                 <span
-                  key={i}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-primary-fixed/60 text-primary rounded-full text-sm"
+                  key={tag}
+                  className="inline-flex items-center gap-1 pl-2.5 pr-1 py-0.5 bg-primary-fixed/60 text-primary rounded-full text-xs font-semibold"
                 >
                   #{tag}
                   <button
-                    onClick={() => handleRemoveTag(tag)}
+                    type="button"
+                    onClick={() => setTags(tags.filter((t) => t !== tag))}
                     className="hover:bg-primary-fixed rounded-full p-0.5"
                     aria-label={`Remove tag ${tag}`}
                   >
-                    <X size={12} strokeWidth={2} />
+                    <X size={12} strokeWidth={2.25} />
                   </button>
                 </span>
               ))}
             </div>
-            <div className="flex gap-2">
+          )}
+
+          {error && (
+            <p role="alert" className="mt-3 text-sm text-error">
+              {error}
+            </p>
+          )}
+
+          <div className="mt-3 pt-3 border-t border-outline-variant/40 flex items-center gap-2">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={pickFile}
+              accept="image/*,video/*"
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={posting}
+              className="p-2 -ml-2 text-primary hover:bg-primary-fixed/60 rounded-full transition-colors disabled:opacity-50"
+              aria-label="Attach a photo or video"
+              title="Photo or video"
+            >
+              <ImageIcon size={20} strokeWidth={1.75} />
+            </button>
+
+            <label className="flex items-center gap-1 flex-1 min-w-0 max-w-[220px] px-2.5 py-1 rounded-full text-sm text-on-surface-variant focus-within:bg-surface-container-low transition-colors">
+              <Hash size={15} strokeWidth={2} className="text-primary flex-shrink-0" />
               <input
                 type="text"
                 value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
-                onKeyDown={(e) =>
-                  e.key === 'Enter' &&
-                  (e.preventDefault(), handleAddTag())
-                }
-                placeholder="Add topic tags — hit Enter"
-                className="flex-1 text-sm px-3.5 py-1.5 border border-outline-variant/50 rounded-full focus:outline-none focus:ring-2 focus:ring-primary-container/20 focus:border-primary-container bg-surface-container-low text-on-surface"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ',') {
+                    e.preventDefault();
+                    addTag();
+                  }
+                }}
+                onBlur={addTag}
+                disabled={posting || tags.length >= MAX_TAGS}
+                placeholder="Add a topic"
+                aria-label="Add a topic tag"
+                className="w-full min-w-0 bg-transparent border-none p-0 text-sm focus:outline-none placeholder:text-outline text-on-surface"
               />
+            </label>
 
-              <button
-                onClick={handleAddTag}
-                disabled={!tagInput.trim()}
-                className="px-3.5 py-1.5 bg-primary-container text-on-primary rounded-full text-sm font-semibold hover:bg-primary disabled:opacity-50 active:translate-y-[1px]"
-              >
-                Add
-              </button>
-            </div>
-          </div>
-
-          {/* ------------------------------------------------
-              Bottom Actions
-          ------------------------------------------------ */}
-
-          <div className="flex items-center justify-between">
-            <div className="flex gap-1 text-primary">
-
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleImageSelect}
-                accept="image/*,video/*"
-                className="hidden"
-              />
-
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="p-2 hover:bg-primary-fixed/60 rounded-full transition-colors"
-                aria-label="Attach image or video"
-              >
-                <ImageIcon size={20} strokeWidth={1.75} />
-              </button>
-            </div>
-
-            <Button
-              onClick={handleSubmit}
-              disabled={!canSubmit}
-              className={
-                !canSubmit
-                  ? 'opacity-50 cursor-not-allowed'
-                  : ''
-              }
-            >
-              {posting && (
-                <Loader2
-                  size={18}
-                  className="animate-spin"
-                />
+            <div className="ml-auto flex items-center gap-3">
+              {remaining < 200 && (
+                <span className={`text-xs tabular-nums ${remaining < 0 ? 'text-error font-semibold' : 'text-on-surface-variant'}`}>
+                  {remaining}
+                </span>
               )}
-
-              {posting ? 'Publishing…' : 'Publish'}
-            </Button>
+              <Button onClick={submit} disabled={!canSubmit} className="px-5">
+                {posting && <Loader2 size={16} className="animate-spin" />}
+                {posting ? 'Posting…' : 'Post'}
+              </Button>
+            </div>
           </div>
         </div>
       </div>
