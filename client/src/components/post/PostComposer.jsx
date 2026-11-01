@@ -225,7 +225,7 @@ export function PostComposer({ currentUser, onPostCreated, focusKey }) {
                   {remaining}
                 </span>
               )}
-              <Button onClick={submit} disabled={!canSubmit} className="px-5">
+              <Button onClick={submit} disabled className="px-5">
                 {posting && <Loader2 size={16} className="animate-spin" />}
                 {posting ? 'Posting…' : 'Post'}
               </Button>
